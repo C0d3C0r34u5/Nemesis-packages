@@ -87,7 +87,14 @@ once(
 once("-D documentation=true", "-D documentation=false")
 once("-D man-pages=true", "-D man-pages=false")
 
-# 6. Drop the splits we do not replace.
+# 6. Arch's _pick() assumes every file it lists was built, and package_gtk4()
+#    picks demo/docs/icon-cache files into the split packages we drop. With
+#    documentation and man pages off, some of those paths do not exist and
+#    `mv` aborted the whole package step ("cannot stat
+#    usr/share/man/man1/gtk4-demo.1"). Skip what is not there.
+once('    mv "$f" "$d"\n', '    [ -e "$f" ] || continue\n    mv "$f" "$d"\n')
+
+# 7. Drop the splits we do not replace.
 for name in ("gtk4-demos", "gtk4-docs", "gtk-update-icon-cache"):
     m = re.search(rf"^package_{re.escape(name)}\(\) \{{\n.*?^\}}\n\n?", text, re.M | re.S)
     if not m:
