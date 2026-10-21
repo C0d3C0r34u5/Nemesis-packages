@@ -19,7 +19,9 @@ permissions:
 env:
   GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
   PACKAGE: gtk4-live-css
-  RELEASE_TAG: gtk4-live-css-repo
+  # Must match stages/55-packages-repo.sh in the Nemesis repo:
+  #   Server = https://github.com/C0d3C0r34u5/Nemesis-packages/releases/download/repo
+  RELEASE_TAG: repo
 
 jobs:
   build:
@@ -124,6 +126,6 @@ jobs:
             Pacman repository for `gtk4-live-css` (Arch's gtk4 + the live
             user-CSS reload patch). Machine-built by
             `.github/workflows/gtk4-live-css.yml`; see
-            `gtk4-live-css/README.md`.
+            `gtk4-live-css/README.md`. Clients use the release tag `repo`.
           files: repo/*
           fail_on_unmatched_files: true
