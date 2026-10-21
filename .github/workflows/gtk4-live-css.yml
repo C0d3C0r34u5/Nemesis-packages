@@ -1,0 +1,129 @@
+name: gtk4-live-css
+
+# Rebuilds Arch's gtk4 with gtk4-live-css/gtk4-user-css-live-reload.patch
+# and publishes the result plus a pacman database to the `gtk4-live-css-repo`
+# release, so the package tracks Arch instead of going stale in pkgs/.
+#
+# Skips the (10-30 minute) build when the current Arch gtk4 version is already
+# published. Signs the package and the database when a GPG_PRIVATE_KEY secret
+# is configured.
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+  PACKAGE: gtk4-live-css
+  RELEASE_TAG: gtk4-live-css-repo
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install tools
+        run: pacman -Syu --noconfirm --needed git python sudo curl
+
+      - name: derive PKGBUILD from Arch
+        id: derive
+        run: |
+          set -euo pipefail
+          base=https://gitlab.archlinux.org/archlinux/packaging/packages/gtk4/-/raw/main
+          curl -fsSL -o arch.PKGBUILD "$base/PKGBUILD"
+          python3 gtk4-live-css/derive-pkgbuild.py arch.PKGBUILD > PKGBUILD
+          cp gtk4-live-css/gtk4-user-css-live-reload.patch .
+
+          # sanity: the derived PKGBUILD must be ours and must carry the patch
+          grep -qx 'pkgname=gtk4-live-css' PKGBUILD
+          grep -q 'gtk4-user-css-live-reload.patch' PKGBUILD
+          grep -q 'conflicts=(gtk4)' PKGBUILD
+
+          # Arch ships helper files next to its PKGBUILD (hooks, scripts) and
+          # lists them in source=(); fetch every entry that is not a URL and not
+          # our own patch. Let bash do the brace expansion ({hook,script}) and
+          # $pkgver substitution, the same way makepkg will.
+          epoch=$(sed -n 's/^epoch=//p' PKGBUILD)
+          pkgver=$(sed -n 's/^pkgver=//p' PKGBUILD)
+          pkgrel=$(sed -n 's/^pkgrel=//p' PKGBUILD)
+          body=$(awk '/^source=\(/,/^\)/' PKGBUILD | sed -E '1d; $d; s/^[[:space:]]+//; s/[[:space:]]+$//')
+          eval "sources=( $body )"
+          for f in "${sources[@]}"; do
+            case $f in
+              git+*|http://*|https://*|gtk4-user-css-live-reload.patch) continue ;;
+            esac
+            echo "fetching $f"
+            curl -fsSL -o "$f" "$base/$f"
+          done
+          ls -1 ./*.hook ./*.script 2>/dev/null || true
+
+          echo "epoch=${epoch:-0} pkgver=$pkgver pkgrel=$pkgrel"
+          echo "asset=$PACKAGE-${epoch:+$epoch.}$pkgver-$pkgrel" >> "$GITHUB_OUTPUT"
+
+      - name: already published?
+        id: published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset='${{ steps.derive.outputs.asset }}'
+          if curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+             | grep -q "\"name\": \"$asset"; then
+            echo "skip=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: import signing key
+        if: steps.published.outputs.skip == 'no' && env.GPG_PRIVATE_KEY != ''
+        run: |
+          pacman -S --noconfirm --needed gnupg
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: build
+        if: steps.published.outputs.skip == 'no'
+        run: |
+          set -euo pipefail
+          id -u builder >/dev/null 2>&1 || useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chmod 0440 /etc/sudoers.d/builder
+          chown -R builder: .
+          sign=""
+          [ -n "${GPG_PRIVATE_KEY:-}" ] && sign="--sign"
+          sudo -u builder makepkg -s --noconfirm $sign
+          ls -l ./*.pkg.tar.zst
+
+      - name: pacman database
+        if: steps.published.outputs.skip == 'no'
+        run: |
+          set -euo pipefail
+          mkdir -p repo
+          cp ./*.pkg.tar.zst repo/
+          sign=""
+          [ -n "${GPG_PRIVATE_KEY:-}" ] && sign="--sign"
+          ( cd repo && repo-add $sign "$PACKAGE.db.tar.gz" ./*.pkg.tar.zst )
+          ls -l repo
+
+      - name: publish
+        if: steps.published.outputs.skip == 'no'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: gtk4-live-css pacman repository
+          body: |
+            Pacman repository for `gtk4-live-css` (Arch's gtk4 + the live
+            user-CSS reload patch). Machine-built by
+            `.github/workflows/gtk4-live-css.yml`; see
+            `gtk4-live-css/README.md`.
+          files: repo/*
+          fail_on_unmatched_files: true
