@@ -33,7 +33,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: install tools
-        run: pacman -Syu --noconfirm --needed git python sudo curl
+        run: pacman -Syu --noconfirm --needed git python sudo curl gnupg
+
+      - name: build user
+        run: |
+          id -u builder >/dev/null 2>&1 || useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chmod 0440 /etc/sudoers.d/builder
 
       - name: derive PKGBUILD from Arch
         id: derive
@@ -87,10 +93,18 @@ jobs:
           fi
 
       - name: import signing key
+        id: key
         if: steps.published.outputs.skip == 'no' && env.GPG_PRIVATE_KEY != ''
         run: |
-          pacman -S --noconfirm --needed gnupg
+          set -euo pipefail
+          # makepkg signs as `builder`, repo-add signs as root: both keyrings
+          # need the key.
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          printf '%s' "$GPG_PRIVATE_KEY" | sudo -H -u builder gpg --batch --import
+          fpr=$(gpg --list-keys --with-colons | awk -F: '/^fpr/ { print $10; exit }')
+          [ -n "$fpr" ] || { echo "no key imported"; exit 1; }
+          echo "fingerprint $fpr"
+          echo "fpr=$fpr" >> "$GITHUB_OUTPUT"
 
       - name: build
         if: steps.published.outputs.skip == 'no'
@@ -101,19 +115,29 @@ jobs:
           chmod 0440 /etc/sudoers.d/builder
           chown -R builder: .
           sign=""
-          [ -n "${GPG_PRIVATE_KEY:-}" ] && sign="--sign"
-          sudo -u builder makepkg -s --noconfirm $sign
-          ls -l ./*.pkg.tar.zst
+          gpgkey=""
+          [ -n "${GPG_PRIVATE_KEY:-}" ] && { sign="--sign"; gpgkey="${{ steps.key.outputs.fpr }}"; }
+          sudo -H -u builder env GPGKEY="$gpgkey" makepkg -s --noconfirm $sign
+          # we do not ship debug symbols in the repo
+          rm -f ./*-debug-*.pkg.tar.zst ./*-debug-*.pkg.tar.zst.sig
+          ls -l ./*.pkg.tar.zst*
 
       - name: pacman database
         if: steps.published.outputs.skip == 'no'
         run: |
           set -euo pipefail
           mkdir -p repo
+          # pacman downloads <pkg>.sig next to each package, so the signatures
+          # must be published too (SigLevel = Required on the client).
           cp ./*.pkg.tar.zst repo/
-          sign=""
-          [ -n "${GPG_PRIVATE_KEY:-}" ] && sign="--sign"
-          ( cd repo && repo-add $sign "$PACKAGE.db.tar.gz" ./*.pkg.tar.zst )
+          shopt -s nullglob
+          sigs=(./*.pkg.tar.zst.sig)
+          if (( ${#sigs[@]} )); then cp "${sigs[@]}" repo/; fi
+          sign=()
+          if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
+            sign=(--sign --key "${{ steps.key.outputs.fpr }}")
+          fi
+          ( cd repo && repo-add "${sign[@]}" "$PACKAGE.db.tar.gz" ./*.pkg.tar.zst )
           ls -l repo
 
       - name: publish
