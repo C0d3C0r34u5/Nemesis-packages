@@ -81,7 +81,13 @@ once(
     "  conflicts=(gtk4)\n",
 )
 
-# 5. Drop the splits we do not replace.
+# 5. Do not build the API documentation or man pages: they belong to the
+#    gtk4-docs split package, which we drop, and gi-docgen over the whole GTK
+#    API is by far the slowest part of the build (it dominated a 40-minute run).
+once("-D documentation=true", "-D documentation=false")
+once("-D man-pages=true", "-D man-pages=false")
+
+# 6. Drop the splits we do not replace.
 for name in ("gtk4-demos", "gtk4-docs", "gtk-update-icon-cache"):
     m = re.search(rf"^package_{re.escape(name)}\(\) \{{\n.*?^\}}\n\n?", text, re.M | re.S)
     if not m:
