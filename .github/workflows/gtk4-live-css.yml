@@ -117,7 +117,9 @@ jobs:
           sign=""
           gpgkey=""
           [ -n "${GPG_PRIVATE_KEY:-}" ] && { sign="--sign"; gpgkey="${{ steps.key.outputs.fpr }}"; }
-          sudo -H -u builder env GPGKEY="$gpgkey" makepkg -s --noconfirm $sign
+          sudo -H -u builder env GPGKEY="$gpgkey" \
+            PACKAGER="Nemesis Packages <packages@nemesis.invalid>" \
+            makepkg -s --noconfirm $sign
           # we do not ship debug symbols in the repo
           rm -f ./*-debug-*.pkg.tar.zst ./*-debug-*.pkg.tar.zst.sig
           ls -l ./*.pkg.tar.zst*
