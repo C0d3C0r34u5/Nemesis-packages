@@ -160,7 +160,10 @@ jobs:
           if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
             sign=(--sign --key "${{ steps.key.outputs.fpr }}")
           fi
-          ( cd repo && repo-add "${sign[@]}" "$PACKAGE.db.tar.gz" ./*.pkg.tar.zst )
+          # The database must be named after the repo section clients use
+          # ([nemesis] -> nemesis.db), not after the package: that mismatch made
+          # pacman ask for a file the release does not have.
+          ( cd repo && repo-add "${sign[@]}" nemesis.db.tar.gz ./*.pkg.tar.zst )
           ls -l repo
 
       - name: publish
