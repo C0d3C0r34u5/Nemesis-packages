@@ -70,8 +70,24 @@ if not m:
     sys.exit("derive-pkgbuild: b2sums=( ... ) block not found")
 text = text[: m.end() - 1] + f"\n        '{digest}')" + text[m.end():]
 
-# 3. Apply it.
-once("prepare() {\n  cd gtk\n", f"prepare() {{\n  cd gtk\n  patch -Np1 -i ../{PATCH}\n")
+# 3. Apply it. If the patch stops fitting (GTK moved the code), do not fail the
+#    whole build: a stale gtk4-live-css is worse than an unpatched one, because a
+#    package needing the newer gtk4 then conflicts with ours. Mark the tree so
+#    the workflow can say so in the release, and build stock gtk4 this time.
+once(
+    "prepare() {\n  cd gtk\n",
+    f"""prepare() {{
+  cd gtk
+  # dry-run first: a partial apply would leave .rej files and a half-patched
+  # library, which is worse than no patch at all.
+  if patch -Np1 --dry-run -i ../{PATCH} >/dev/null 2>&1; then
+    patch -Np1 -i ../{PATCH}
+  else
+    echo '::warning::the live-css patch no longer applies; building stock gtk4'
+    echo unpatched > "$startdir/.unpatched"
+  fi
+""",
+)
 
 # 4. package_gtk4() becomes the single package, standing in for gtk4.
 once("package_gtk4() {\n", "package() {\n")

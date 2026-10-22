@@ -10,8 +10,16 @@ name: gtk4-live-css
 
 on:
   schedule:
-    - cron: "41 4 * * *"
+    # Arch bumps gtk4 every few weeks. Until our build of that version exists,
+    # a package that needs gtk4>=newer conflicts with ours, so keep the window
+    # short: four attempts a day.
+    - cron: "0 */3 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this version is already published
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -83,7 +91,10 @@ jobs:
         run: |
           set -euo pipefail
           asset='${{ steps.derive.outputs.asset }}'
-          if curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "forced rebuild"
+            echo "skip=no" >> "$GITHUB_OUTPUT"
+          elif curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
                -H "Accept: application/vnd.github+json" \
                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
              | grep -q "\"name\": \"$asset"; then
@@ -107,6 +118,7 @@ jobs:
           echo "fpr=$fpr" >> "$GITHUB_OUTPUT"
 
       - name: build
+        id: build
         if: steps.published.outputs.skip == 'no'
         run: |
           set -euo pipefail
@@ -123,6 +135,15 @@ jobs:
           # we do not ship debug symbols in the repo
           rm -f ./*-debug-*.pkg.tar.zst ./*-debug-*.pkg.tar.zst.sig
           ls -l ./*.pkg.tar.zst*
+          # prepare() drops this marker when the patch no longer applies (see
+          # derive-pkgbuild.py): we still publish, so nobody is left on an old
+          # gtk4, but the release says so.
+          if [ -f .unpatched ]; then
+            echo "unpatched=yes" >> "$GITHUB_OUTPUT"
+            echo "::warning title=gtk4-live-css unpatched::the live-css patch did not apply; this build is stock gtk4"
+          else
+            echo "unpatched=no" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: pacman database
         if: steps.published.outputs.skip == 'no'
@@ -153,5 +174,6 @@ jobs:
             user-CSS reload patch). Machine-built by
             `.github/workflows/gtk4-live-css.yml`; see
             `gtk4-live-css/README.md`. Clients use the release tag `repo`.
+            ${{ steps.build.outputs.unpatched == 'yes' && '⚠️ This build is STOCK gtk4: the live-css patch did not apply to this GTK version. It is published so packages needing the newer gtk4 do not conflict; re-dispatch with force once the patch is fixed.' || '' }}
           files: repo/*
           fail_on_unmatched_files: true
