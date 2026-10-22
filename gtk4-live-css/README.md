@@ -67,9 +67,12 @@ is set.
   is fixed. That is the cost of the feature.
 * Until the package is signed and the repo has a real `SigLevel`, clients must
   trust it explicitly — do not ship `TrustAll` in a default `pacman.conf`.
-* It only matters for apps that actually render through GTK 4. Nothing on a
-  stock Nemesis does by default: Thunar and `gnome-disk-utility` are GTK 3, and
-  **LibreOffice is not a GTK 4 app either** — it runs its own toolkit (VCL) with
+* It only matters for apps that actually render through GTK 4. A stock Nemesis
+  has exactly one: **`file-roller`**, the archive manager behind Thunar's
+  right-click Extract/Create, which depends on `gtk4` + `libadwaita` — without
+  this package it keeps its old colours after a theme switch. Everything else is
+  GTK 3 (Thunar, `gnome-disk-utility`), and **LibreOffice is not a GTK 4 app
+  either** — it runs its own toolkit (VCL) with
   optional GTK backends, and Arch lists both `gtk3` and `gtk4` as *optional*
   deps (`gtk4: for GTK4 integration (experimental)`). It picks `gtk3` here;
   `SAL_USE_VCLPLUGIN=gtk4 soffice` forces the experimental one, which would then
