@@ -67,9 +67,14 @@ is set.
   is fixed. That is the cost of the feature.
 * Until the package is signed and the repo has a real `SigLevel`, clients must
   trust it explicitly — do not ship `TrustAll` in a default `pacman.conf`.
-* It only matters for GTK 4 apps. Nemesis currently ships **none** by default
-  (`gnome-disk-utility` is GTK 3, Thunar is GTK 3); the beneficiaries are
-  flatpak GTK 4 apps and anything GTK 4 added later.
+* It only matters for apps that actually render through GTK 4. Nothing on a
+  stock Nemesis does by default: Thunar and `gnome-disk-utility` are GTK 3, and
+  **LibreOffice is not a GTK 4 app either** — it runs its own toolkit (VCL) with
+  optional GTK backends, and Arch lists both `gtk3` and `gtk4` as *optional*
+  deps (`gtk4: for GTK4 integration (experimental)`). It picks `gtk3` here;
+  `SAL_USE_VCLPLUGIN=gtk4 soffice` forces the experimental one, which would then
+  follow this patch too. The real beneficiaries are flatpak GTK 4 apps and
+  anything GTK 4 added later.
 
 ## Licence
 
