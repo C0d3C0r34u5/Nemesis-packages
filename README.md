@@ -46,6 +46,13 @@ clients keep one `Server =` line.
 
 ## Notes
 
+* **Packages with an epoch** (`gtk4-live-css` is `1:4.24.1-1`) have one trap: GitHub
+  release assets cannot contain `:`, so it renames them `:` → `.`, while
+  `repo-add` records `%FILENAME%` from the file name it is given. The workflow
+  therefore **renames the package (and its `.sig`) before `repo-add`** — then the
+  database points at the URL the asset actually gets. Editing `%FILENAME%` inside
+  a finished database does **not** work: pacman rejects the hand-made tarball with
+  `invalid name for database entry` (learned the hard way, 2026-10-29).
 * The signing key is a dedicated, passphrase-less key used only by CI. Its
   primary copy (and the revocation certificate) is held offline; rotate by
   publishing a new key and a keyring update.
