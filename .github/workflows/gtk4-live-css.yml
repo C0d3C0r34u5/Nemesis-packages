@@ -164,6 +164,42 @@ jobs:
           # ([nemesis] -> nemesis.db), not after the package: that mismatch made
           # pacman ask for a file the release does not have.
           ( cd repo && repo-add "${sign[@]}" nemesis.db.tar.gz ./*.pkg.tar.zst )
+
+          # The package has an epoch (`1:4.24.1-1`), so repo-add writes a
+          # %FILENAME% containing a colon — and GitHub **renames assets**,
+          # turning ':' into '.', so the URL pacman asked for 404'd and every
+          # install silently fell back to stock gtk4. Rewrite %FILENAME% to the
+          # name the asset actually gets, then sign the rewritten database.
+          python3 - <<'PYEOF'
+          import pathlib, re, subprocess, tarfile, shutil
+          repo = pathlib.Path("repo")
+          db = repo / "nemesis.db.tar.gz"
+          work = repo / "_dbwork"
+          shutil.rmtree(work, ignore_errors=True)
+          work.mkdir()
+          with tarfile.open(db) as tf:
+              tf.extractall(work)
+          patched = False
+          for desc in work.glob("*/desc"):
+              text = desc.read_text()
+              fixed = re.sub(r"(?m)^(.*-\d+):(\d)", r"\1.\2", text)
+              if fixed != text:
+                  desc.write_text(fixed)
+                  patched = True
+          if patched:
+              with tarfile.open(db, "w:gz") as tf:
+                  for entry in sorted(work.iterdir()):
+                      tf.add(entry, arcname=entry.name)
+              shutil.copyfile(db, repo / "nemesis.db")
+          shutil.rmtree(work, ignore_errors=True)
+          if patched:
+              print("rewrote %FILENAME% (epoch colon -> period) and re-signing")
+              subprocess.run(["rm", "-f", str(db) + ".sig", str(repo / "nemesis.db.sig")], check=True)
+              for target in (db, repo / "nemesis.db"):
+                  subprocess.run(["gpg", "--batch", "--yes", "--detach-sign",
+                                  "--output", str(target) + ".sig", str(target)], check=True)
+          PYEOF
+
           ls -l repo
 
       - name: publish
