@@ -149,57 +149,33 @@ jobs:
         if: steps.published.outputs.skip == 'no'
         run: |
           set -euo pipefail
+          # GitHub renames release assets, replacing the epoch's ':' with '.'.
+          # repo-add records %FILENAME% from the file name it is given, so rename
+          # the package (and its signature) *before* indexing: the database then
+          # points at the URL the asset actually gets. Rewriting %FILENAME% inside
+          # a finished database does not work — pacman rejects the hand-made
+          # tarball with "invalid name for database entry".
+          for f in ./*.pkg.tar.zst ./*.pkg.tar.zst.sig; do
+            [ -e "$f" ] || continue
+            new=${f//:/.}
+            [ "$new" = "$f" ] || mv -- "$f" "$new"
+          done
+
           mkdir -p repo
-          # pacman downloads <pkg>.sig next to each package, so the signatures
-          # must be published too (SigLevel = Required on the client).
           cp ./*.pkg.tar.zst repo/
+          # pacman fetches <pkg>.sig next to each package, so publish them too
+          # (clients run SigLevel = Required).
           shopt -s nullglob
           sigs=(./*.pkg.tar.zst.sig)
           if (( ${#sigs[@]} )); then cp "${sigs[@]}" repo/; fi
+
           sign=()
           if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
             sign=(--sign --key "${{ steps.key.outputs.fpr }}")
           fi
-          # The database must be named after the repo section clients use
-          # ([nemesis] -> nemesis.db), not after the package: that mismatch made
-          # pacman ask for a file the release does not have.
+          # The database is named after the repo section clients use
+          # ([nemesis] -> nemesis.db), not after the package.
           ( cd repo && repo-add "${sign[@]}" nemesis.db.tar.gz ./*.pkg.tar.zst )
-
-          # The package has an epoch (`1:4.24.1-1`), so repo-add writes a
-          # %FILENAME% containing a colon — and GitHub **renames assets**,
-          # turning ':' into '.', so the URL pacman asked for 404'd and every
-          # install silently fell back to stock gtk4. Rewrite %FILENAME% to the
-          # name the asset actually gets, then sign the rewritten database.
-          python3 - <<'PYEOF'
-          import pathlib, re, subprocess, tarfile, shutil
-          repo = pathlib.Path("repo")
-          db = repo / "nemesis.db.tar.gz"
-          work = repo / "_dbwork"
-          shutil.rmtree(work, ignore_errors=True)
-          work.mkdir()
-          with tarfile.open(db) as tf:
-              tf.extractall(work)
-          patched = False
-          for desc in work.glob("*/desc"):
-              text = desc.read_text()
-              fixed = re.sub(r"(?m)^(.*-\d+):(\d)", r"\1.\2", text)
-              if fixed != text:
-                  desc.write_text(fixed)
-                  patched = True
-          if patched:
-              with tarfile.open(db, "w:gz") as tf:
-                  for entry in sorted(work.iterdir()):
-                      tf.add(entry, arcname=entry.name)
-              shutil.copyfile(db, repo / "nemesis.db")
-          shutil.rmtree(work, ignore_errors=True)
-          if patched:
-              print("rewrote %FILENAME% (epoch colon -> period) and re-signing")
-              subprocess.run(["rm", "-f", str(db) + ".sig", str(repo / "nemesis.db.sig")], check=True)
-              for target in (db, repo / "nemesis.db"):
-                  subprocess.run(["gpg", "--batch", "--yes", "--detach-sign",
-                                  "--output", str(target) + ".sig", str(target)], check=True)
-          PYEOF
-
           ls -l repo
 
       - name: publish
